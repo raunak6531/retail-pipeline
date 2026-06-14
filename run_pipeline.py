@@ -39,8 +39,7 @@ if __name__ == "__main__":
 
     print("\nStep 2/2 — Running ETL pipeline...")
     clean_df = run_pipeline(
-        raw_path="data/raw_sales.csv",
-        db_path="data/retail.db"
+        raw_path="data/raw_sales.csv"
     )
 
     print_summary(clean_df)
