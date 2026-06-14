@@ -1,9 +1,12 @@
 import pandas as pd
 import numpy as np
-import sqlite3
 import os
 import logging
 from datetime import datetime
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,24 +81,22 @@ def transform(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── LOAD ──────────────────────────────────────────────────────────────────────
 
-def load(df: pd.DataFrame, db_path: str = "data/retail.db"):
-    log.info(f"Loading data into SQLite database at {db_path}")
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-    conn = sqlite3.connect(db_path)
+def load(df: pd.DataFrame):
+    database_url = os.getenv("DATABASE_URL")
+    log.info("Connecting to PostgreSQL via SQLAlchemy...")
+    engine = create_engine(database_url)
 
     # Main fact table
-    df.to_sql("sales", conn, if_exists="replace", index=False)
+    df.to_sql("sales", con=engine, if_exists="replace", index=False)
     log.info(f"Wrote {len(df):,} rows to 'sales' table")
 
     # Pre-aggregate summary tables for faster dashboard queries
-    _create_summary_tables(conn, df)
+    _create_summary_tables(engine, df)
 
-    conn.close()
-    log.info("Database connection closed. ETL complete.")
+    log.info("ETL complete.")
 
 
-def _create_summary_tables(conn: sqlite3.Connection, df: pd.DataFrame):
+def _create_summary_tables(engine, df: pd.DataFrame):
     # Monthly revenue by category
     monthly = (
         df[df["net_revenue"] > 0]
@@ -105,7 +106,7 @@ def _create_summary_tables(conn: sqlite3.Connection, df: pd.DataFrame):
              avg_order_value=("net_revenue", "mean"))
         .reset_index()
     )
-    monthly.to_sql("monthly_category_summary", conn, if_exists="replace", index=False)
+    monthly.to_sql("monthly_category_summary", con=engine, if_exists="replace", index=False)
 
     # Regional performance
     regional = (
@@ -116,7 +117,7 @@ def _create_summary_tables(conn: sqlite3.Connection, df: pd.DataFrame):
              return_rate=("is_returned", "mean"))
         .reset_index()
     )
-    regional.to_sql("regional_summary", conn, if_exists="replace", index=False)
+    regional.to_sql("regional_summary", con=engine, if_exists="replace", index=False)
 
     # Top products
     products = (
@@ -128,21 +129,21 @@ def _create_summary_tables(conn: sqlite3.Connection, df: pd.DataFrame):
         .reset_index()
         .sort_values("total_revenue", ascending=False)
     )
-    products.to_sql("product_summary", conn, if_exists="replace", index=False)
+    products.to_sql("product_summary", con=engine, if_exists="replace", index=False)
 
     log.info("Created 3 summary tables: monthly_category_summary, regional_summary, product_summary")
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
-def run_pipeline(raw_path: str = "data/raw_sales.csv", db_path: str = "data/retail.db"):
+def run_pipeline(raw_path: str = "data/raw_sales.csv"):
     log.info("=" * 50)
     log.info("RETAIL SALES ETL PIPELINE — START")
     log.info("=" * 50)
 
     raw_df    = extract(raw_path)
     clean_df  = transform(raw_df)
-    load(clean_df, db_path)
+    load(clean_df)
 
     log.info("=" * 50)
     log.info("PIPELINE FINISHED SUCCESSFULLY")

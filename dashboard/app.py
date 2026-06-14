@@ -1,10 +1,13 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 import plotly.express as px
 import plotly.graph_objects as go
 import os
-import google.generativeai as genai
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from groq import Groq
+
+load_dotenv()
 
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 
@@ -14,28 +17,28 @@ st.set_page_config(
     layout="wide"
 )
 
-DB_PATH = "data/retail.db"
+# ── DB ENGINE ─────────────────────────────────────────────────────────────────
+
+engine = create_engine(os.getenv("DATABASE_URL"))
 
 # ── DB HELPER ─────────────────────────────────────────────────────────────────
 
 @st.cache_data
 def query(sql: str) -> pd.DataFrame:
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(sql, conn)
-    conn.close()
-    return df
+    return pd.read_sql_query(sql, engine)
 
 def get_schema_info() -> str:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    tables = [row[0] for row in cursor.fetchall()]
+    schema_sql = """
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        ORDER BY table_name, ordinal_position
+    """
+    df = pd.read_sql_query(schema_sql, engine)
     schema = []
-    for table in tables:
-        cursor.execute(f"PRAGMA table_info({table})")
-        cols = [row[1] for row in cursor.fetchall()]
-        schema.append(f"Table '{table}': {', '.join(cols)}")
-    conn.close()
+    for table, group in df.groupby("table_name"):
+        cols = ", ".join(group["column_name"].tolist())
+        schema.append(f"Table '{table}': {cols}")
     return "\n".join(schema)
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
@@ -44,7 +47,7 @@ st.sidebar.title("🛒 Retail Analytics")
 st.sidebar.markdown("---")
 page = st.sidebar.radio("Navigate", ["📊 Overview", "📦 Products", "🗺️ Regional", "🤖 AI Query"])
 st.sidebar.markdown("---")
-st.sidebar.caption("Data: 50K retail transactions | DB: SQLite")
+st.sidebar.caption("Data: 50K retail transactions | DB: PostgreSQL (Supabase)")
 
 # ── OVERVIEW PAGE ─────────────────────────────────────────────────────────────
 
@@ -243,31 +246,33 @@ elif page == "🤖 AI Query":
     st.title("🤖 Ask AI About Your Sales Data")
     st.markdown("Ask questions in plain English — the AI will generate and run the SQL for you.")
 
-    api_key = st.text_input("Enter your Gemini API Key", type="password",
-                             help="Get a free key at https://aistudio.google.com/")
-
     question = st.text_area("Your question", placeholder="e.g. Which region had the highest return rate in Q3?")
 
-    if st.button("Ask AI") and question and api_key:
+    if st.button("Ask AI") and question:
         schema = get_schema_info()
-        prompt = f"""You are a data analyst assistant. Given the following SQLite database schema:
+        system_prompt = f"""You are a data analyst assistant. Given the following PostgreSQL database schema:
 
 {schema}
 
-Generate a single valid SQLite SQL query to answer this question: "{question}"
+Generate a single valid PostgreSQL SQL query to answer the user's question.
 
 Rules:
-- Return ONLY the SQL query, nothing else
-- No markdown formatting, no backticks
+- Return ONLY the raw SQL query, nothing else
+- No markdown formatting, no backticks, no code fences
 - Use only tables and columns that exist in the schema above
-- For revenue calculations use net_revenue column
+- For revenue calculations use the net_revenue column
 - Keep the query concise and correct
 """
         try:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            response = model.generate_content(prompt)
-            generated_sql = response.text.strip()
+            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+            completion = groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": question},
+                ],
+            )
+            generated_sql = completion.choices[0].message.content.strip()
 
             st.markdown("**Generated SQL:**")
             st.code(generated_sql, language="sql")
@@ -289,4 +294,5 @@ Rules:
         except Exception as e:
             st.error(f"Error: {e}")
     elif st.button("Ask AI"):
-        st.warning("Please enter both a question and your API key.")
+        st.warning("Please enter a question first.")
+
