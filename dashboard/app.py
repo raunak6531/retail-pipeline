@@ -58,9 +58,9 @@ if page == "📊 Overview":
     kpis = query("""
         SELECT
             COUNT(transaction_id)  AS total_orders,
-            ROUND(SUM(net_revenue), 0) AS total_revenue,
-            ROUND(AVG(net_revenue), 0) AS avg_order_value,
-            ROUND(SUM(CASE WHEN is_returned=1 THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS return_rate
+            ROUND(SUM(net_revenue)::numeric, 0) AS total_revenue,
+            ROUND(AVG(net_revenue)::numeric, 0) AS avg_order_value,
+            ROUND((SUM(CASE WHEN is_returned=TRUE THEN 1 ELSE 0 END)*100.0/COUNT(*))::numeric, 1) AS return_rate
         FROM sales
     """)
 
@@ -74,7 +74,7 @@ if page == "📊 Overview":
 
     # Monthly revenue trend
     monthly = query("""
-        SELECT year, month, ROUND(SUM(net_revenue),0) AS revenue, COUNT(*) AS orders
+        SELECT year, month, ROUND(SUM(net_revenue)::numeric,0) AS revenue, COUNT(*) AS orders
         FROM sales WHERE net_revenue > 0
         GROUP BY year, month ORDER BY year, month
     """)
@@ -89,7 +89,7 @@ if page == "📊 Overview":
 
     # Category split
     cat = query("""
-        SELECT category, ROUND(SUM(net_revenue),0) AS revenue
+        SELECT category, ROUND(SUM(net_revenue)::numeric,0) AS revenue
         FROM sales WHERE net_revenue > 0
         GROUP BY category ORDER BY revenue DESC
     """)
@@ -117,7 +117,7 @@ if page == "📊 Overview":
     wknd = query("""
         SELECT
             CASE WHEN weekday IN ('Saturday','Sunday') THEN 'Weekend' ELSE 'Weekday' END AS day_type,
-            COUNT(*) AS orders, ROUND(SUM(net_revenue),0) AS revenue
+            COUNT(*) AS orders, ROUND(SUM(net_revenue)::numeric,0) AS revenue
         FROM sales WHERE net_revenue > 0
         GROUP BY day_type
     """)
@@ -147,8 +147,8 @@ elif page == "📦 Products":
     top_products = query(f"""
         SELECT product_name, category,
                SUM(quantity) AS units_sold,
-               ROUND(SUM(net_revenue),0) AS total_revenue,
-               ROUND(AVG(discount_pct)*100,1) AS avg_discount
+               ROUND(SUM(net_revenue)::numeric,0) AS total_revenue,
+               ROUND((AVG(discount_pct)*100)::numeric,1) AS avg_discount
         FROM sales {where} AND net_revenue > 0
         GROUP BY product_name, category
         ORDER BY total_revenue DESC
@@ -156,8 +156,8 @@ elif page == "📦 Products":
     """ if where else f"""
         SELECT product_name, category,
                SUM(quantity) AS units_sold,
-               ROUND(SUM(net_revenue),0) AS total_revenue,
-               ROUND(AVG(discount_pct)*100,1) AS avg_discount
+               ROUND(SUM(net_revenue)::numeric,0) AS total_revenue,
+               ROUND((AVG(discount_pct)*100)::numeric,1) AS avg_discount
         FROM sales WHERE net_revenue > 0
         GROUP BY product_name, category
         ORDER BY total_revenue DESC
@@ -175,8 +175,8 @@ elif page == "📦 Products":
     st.markdown("### Discount vs Revenue Relationship")
     scatter = query("""
         SELECT product_name, category,
-               ROUND(AVG(discount_pct)*100,1) AS avg_discount,
-               ROUND(SUM(net_revenue),0) AS total_revenue,
+               ROUND((AVG(discount_pct)*100)::numeric,1) AS avg_discount,
+               ROUND(SUM(net_revenue)::numeric,0) AS total_revenue,
                SUM(quantity) AS units_sold
         FROM sales WHERE net_revenue > 0
         GROUP BY product_name, category
@@ -189,7 +189,7 @@ elif page == "📦 Products":
 
     st.markdown("### Revenue Bucket Distribution")
     buckets = query("""
-        SELECT revenue_bucket, COUNT(*) AS txns, ROUND(SUM(net_revenue),0) AS revenue
+        SELECT revenue_bucket, COUNT(*) AS txns, ROUND(SUM(net_revenue)::numeric,0) AS revenue
         FROM sales WHERE net_revenue > 0
         GROUP BY revenue_bucket
         ORDER BY revenue DESC
@@ -204,10 +204,10 @@ elif page == "🗺️ Regional":
 
     regional = query("""
         SELECT region,
-               ROUND(SUM(net_revenue),0) AS total_revenue,
+               ROUND(SUM(net_revenue)::numeric,0) AS total_revenue,
                COUNT(*) AS total_orders,
-               ROUND(AVG(net_revenue),0) AS avg_order_value,
-               ROUND(SUM(CASE WHEN is_returned=1 THEN 1 ELSE 0 END)*100.0/COUNT(*),1) AS return_rate
+               ROUND(AVG(net_revenue)::numeric,0) AS avg_order_value,
+               ROUND((SUM(CASE WHEN is_returned=TRUE THEN 1 ELSE 0 END)*100.0/COUNT(*))::numeric,1) AS return_rate
         FROM sales
         GROUP BY region ORDER BY total_revenue DESC
     """)
@@ -229,7 +229,7 @@ elif page == "🗺️ Regional":
 
     st.markdown("### Category Revenue Heatmap by Region")
     heat_data = query("""
-        SELECT region, category, ROUND(SUM(net_revenue),0) AS revenue
+        SELECT region, category, ROUND(SUM(net_revenue)::numeric,0) AS revenue
         FROM sales WHERE net_revenue > 0
         GROUP BY region, category
     """)
@@ -248,7 +248,9 @@ elif page == "🤖 AI Query":
 
     question = st.text_area("Your question", placeholder="e.g. Which region had the highest return rate in Q3?")
 
-    if st.button("Ask AI") and question:
+    ask_clicked = st.button("Ask AI")
+
+    if ask_clicked and question:
         schema = get_schema_info()
         system_prompt = f"""You are a data analyst assistant. Given the following PostgreSQL database schema:
 
@@ -293,6 +295,7 @@ Rules:
 
         except Exception as e:
             st.error(f"Error: {e}")
-    elif st.button("Ask AI"):
+    elif ask_clicked:
         st.warning("Please enter a question first.")
+
 
